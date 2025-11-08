@@ -1,0 +1,80 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: smartscalers.autoscale.monitoring.io
+spec:
+  group: autoscale.monitoring.io
+  names:
+    plural: smartscalers
+    singular: smartscaler
+    kind: SmartScaler
+    shortNames:
+      - sscaler
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                targetRef:
+                  type: object
+                  description: "Reference to the target Deployment being scaled"
+                  properties:
+                    apiVersion: { type: string }
+                    kind: { type: string }
+                    name: { type: string }
+                metrics:
+                  type: array
+                  description: "List of Prometheus-based metrics to drive scaling decisions"
+                  items:
+                    type: object
+                    properties:
+                      name: { type: string, description: "Metric identifier (e.g., cpu, rps, queue)" }
+                      promql: { type: string, description: "PromQL expression for the metric" }
+                      weight: { type: number, description: "Relative weight of this metric in combined decision" }
+                      target: { type: number, description: "Target threshold for this metric" }
+                ewmaAlpha:
+                  type: number
+                  description: "EWMA smoothing factor (0-1) for smoothing metric fluctuations"
+                pid:
+                  type: object
+                  description: "PID controller configuration"
+                  properties:
+                    kp: { type: number, description: "Proportional gain" }
+                    ki: { type: number, description: "Integral gain" }
+                    kd: { type: number, description: "Derivative gain" }
+                dynamicThreshold:
+                  type: object
+                  description: "Optional configuration for dynamic adjustment of metric thresholds"
+                  properties:
+                    enabled: { type: boolean, description: "Enable or disable dynamic threshold adaptation" }
+                    adjustmentFactor: { type: number, description: "Scaling factor for threshold adjustment (0-1)" }
+                stabilization:
+                  type: object
+                  description: "Parameters for scaling stability and cooldown"
+                  properties:
+                    scaleUpWindow: { type: integer, description: "Seconds to wait before next scale-up" }
+                    scaleDownWindow: { type: integer, description: "Seconds to wait before next scale-down" }
+                    cooldown: { type: integer, description: "Cooldown period after each scaling action" }
+                minReplicas:
+                  type: integer
+                  description: "Minimum number of pods allowed"
+                maxReplicas:
+                  type: integer
+                  description: "Maximum number of pods allowed"
+            status:
+              type: object
+              description: "Observed state of the SmartScaler"
+              properties:
+                currentReplicas: { type: integer, description: "Current number of replicas running" }
+                desiredReplicas: { type: integer, description: "Latest desired replica count" }
+                combinedSignal: { type: number, description: "Latest computed combined EWMA+PID signal" }
+                lastUpdated: { type: string, description: "Timestamp of last scaling decision" }
+      subresources:
+        status: {}

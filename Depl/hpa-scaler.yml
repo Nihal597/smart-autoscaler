@@ -1,0 +1,46 @@
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+    name: integration-svc-hpa
+    namespace: default
+spec:
+    scaleTargetRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        name: integration-svc-depl
+    minReplicas: 1
+    maxReplicas: 5
+    metrics:
+        - type: Resource
+          resource:
+            name: cpu
+            target:
+              type: Utilization
+              averageUtilization: 80   # Level 1 threshold
+        # - type: Resource
+        #   resource:
+        #     name: memory
+        #     target:
+        #       type: Utilization
+        #       averageUtilization: 80   # Level 1 threshold
+    behavior:
+        scaleUp:
+            policies:
+                - type: Percent
+                  value: 100
+                  periodSeconds: 60
+                - type: Pods
+                  value: 2
+                  periodSeconds: 60
+            selectPolicy: Max
+            stabilizationWindowSeconds: 0
+        scaleDown:
+            policies:
+                - type: Percent
+                  value: 50
+                  periodSeconds: 60
+                - type: Pods
+                  value: 2
+                  periodSeconds: 60
+            selectPolicy: Max
+            stabilizationWindowSeconds: 0

@@ -1,0 +1,50 @@
+prometheus:
+  enabled: true
+  namespace: monitoring
+  serviceAccount:
+    create: true
+    name: prometheus
+  alertmanager:
+    enabled: true
+  server:
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+    persistentVolume:
+      enabled: true
+      size: 8Gi
+    service:
+      type: ClusterIP
+    podMonitor:
+      enabled: true
+    scrapeConfig:
+      scrapeInterval: 30s   # How frequently to scrape targets
+      scrapeTimeout: 10s    # Timeout for scraping targets
+
+grafana:
+  enabled: true
+  namespace: monitoring
+  serviceAccount:
+    create: true
+    name: grafana
+  adminUser: admin
+  adminPassword: prom-operator
+  persistence:
+    enabled: true
+    size: 5Gi
+  service:
+    type: ClusterIP
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus-server.monitoring.svc.cluster.local
+
+namespace: monitoring

@@ -1,0 +1,37 @@
+apiVersion: autoscale.monitoring.io/v1
+kind: SmartScaler
+metadata:
+  name: integration-scaler
+  namespace: default
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: integration-svc-depl
+  metrics:
+    - name: cpu
+      promql: 'avg(rate(container_cpu_usage_seconds_total{namespace="default", pod=~"integration-svc-.*"}[1m]))'
+      weight: 0.3
+      target: 0.5   # target utilization (fraction of requested CPU)
+    - name: rps
+      promql: 'sum(rate(http_server_requests_seconds_count{job="integration-svc"}[1m]))'
+      weight: 0.6
+      target: 100   # target requests per second per cluster (you can change to per-pod later)
+    - name: queue
+      promql: 'max(integration_request_queue_length{job="integration-svc"})'
+      weight: 0.1
+      target: 5
+  ewmaAlpha: 0.25
+  pid:
+    kp: 0.6
+    ki: 0.015
+    kd: 0.08
+  dynamicThreshold:
+    enabled: true
+    adjustmentFactor: 0.1
+  stabilization:
+    scaleUpWindow: 20     # seconds
+    scaleDownWindow: 180  # seconds — longer for memory (JVM) workloads
+    cooldown: 45
+  minReplicas: 1
+  maxReplicas: 5
