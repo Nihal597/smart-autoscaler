@@ -19,9 +19,6 @@ scale_actions_counter = Counter(
     ['direction']  # label for 'scale_up' or 'scale_down'
 )
 
-# start prometheus metrics endpoint (port 8000)
-start_http_server(8000)
-
 PROM_URL = os.getenv("PROMETHEUS_URL", "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090")
 NAMESPACE = os.getenv("NAMESPACE", "default")
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "15"))
@@ -105,7 +102,7 @@ def main():
         # RPS: per‑pod requests/sec (avg). set target per‑pod (start ~0.02-0.2)
         {"name": "rps", "promql": f'avg by (pod) (rate(http_server_requests_seconds_count{{namespace="{NAMESPACE}", job="integration-svc"}}[1m]))', "target": 0.05, "weight": 0.3},
         # Queue (max per pod / cluster); tune target as needed
-        {"name": "queue", "promql": f'max(integration_request_queue_length{{namespace="{NAMESPACE}", job="integration-svc"}})', "target": 5, "weight": 0.2}
+        {"name": "queue", "promql": f'max(integration_queue_length{{namespace="{NAMESPACE}", job="integration-svc"}})', "target": 5, "weight": 0.2}
     ]
 
     # per-metric EWMA and PID
@@ -210,4 +207,6 @@ def main():
         time.sleep(POLL_INTERVAL)
 
 if __name__ == "__main__":
+    # start prometheus metrics endpoint (port 8000)
+    start_http_server(8000)
     main()

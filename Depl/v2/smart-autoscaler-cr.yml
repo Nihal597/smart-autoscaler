@@ -18,7 +18,7 @@ spec:
       weight: 0.6
       target: 100   # target requests per second per cluster (you can change to per-pod later)
     - name: queue
-      promql: 'max(integration_request_queue_length{job="integration-svc"})'
+      promql: 'max(integration_queue_length{job="integration-svc"})'
       weight: 0.1
       target: 5
   ewmaAlpha: 0.25

@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: integration-svc-depl
-        image: nihal597/intergration-svc
+        image: nihal597/intergration-svc:latest
         resources:
           requests:
             memory: "128Mi"
