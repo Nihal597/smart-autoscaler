@@ -12,9 +12,13 @@ spec:
     - name: cpu
       promql: |
         avg by (pod) (
-          rate(container_cpu_usage_seconds_total{namespace="default", pod=~"integration-svc-depl-autoscaler.*", container!="POD"}[1m])
+          rate(container_cpu_usage_seconds_total{
+            namespace="default",
+            pod=~"integration-svc-depl-autoscaler.*",
+            container!="POD"
+          }[1m])
         )
-      target: 70.0
+      target: 0.25
       weight: 0.6
 
     - name: rps
@@ -22,27 +26,29 @@ spec:
         sum by (pod) (
           rate(http_server_requests_seconds_count{
             namespace="default",
-            application="integration-svc-smart"
+            application="integration-svc-smart",
+            status="200",
+            uri="/api/v1/monitor/{number}"
           }[1m])
         )
-      target: 10.0
-      weight: 0.3
+      target: 0.05
+      weight: 0.4
 
-    - name: queue
-      promql: max(integration_queue_length{namespace="default", application="integration-svc-smart"})
-      target: 5
-      weight: 0.1
+    # - name: queue
+    #   promql: avg(integration_queue_length{namespace="default", application="integration-svc-smart"})
+    #   target: 10
+    #   weight: 0.2
   ewmaAlpha: 0.25
   pid:
-    kp: 0.6
-    ki: 0.02
+    kp: 1
+    ki: 0.05
     kd: 0.1
   dynamicThreshold:
     enabled: true
     adjustmentFactor: 0.1
   stabilization:
-    scaleUpWindow: 20     # seconds
-    scaleDownWindow: 180  # seconds — longer for memory (JVM) workloads
-    cooldown: 45
+    scaleUpWindow: 15     # seconds
+    scaleDownWindow: 90  # seconds
+    cooldown: 30
   minReplicas: 1
   maxReplicas: 5
