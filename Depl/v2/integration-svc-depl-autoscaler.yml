@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: integration-svc-depl-hpa
+  name: integration-svc-depl-autoscaler
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: integration-svc-depl-hpa
+      app: integration-svc-depl-autoscaler
   template:
     metadata:
       labels:
-        app: integration-svc-depl-hpa
+        app: integration-svc-depl-autoscaler
     spec:
       containers:
-      - name: integration-svc-depl-hpa
+      - name: integration-svc-depl-autoscaler
         image: nihal597/intergration-svc:latest
         resources:
           requests:
@@ -26,25 +26,25 @@ spec:
         - containerPort: 9110
         env:
           - name: MANAGEMENT_METRICS_TAGS_APPLICATION
-            value: "integration-svc-hpa"
+            value: "integration-svc-smart"
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: integration-svc-hpa
+  name: integration-svc-smart
   labels:
-    app: integration-svc-hpa
+    app: integration-svc-smart
   annotations:
     prometheus.io/scrape: "true"
-    prometheus.io/port: "9110"
+    prometheus.io/port: "9111"
     prometheus.io/path: "/actuator/prometheus"
 spec:
   selector:
-    app: integration-svc-depl-hpa
+    app: integration-svc-depl-autoscaler
   ports:  
     - name: http
       protocol: TCP
-      port: 9110
+      port: 9111
       targetPort: 9110
   type: LoadBalancer
 

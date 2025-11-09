@@ -1,13 +1,13 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: integration-svc-hpa
+  name: integration-svc-smart
   labels:
     release: kube-prometheus-stack   # must match your Prometheus release name
 spec:
   selector:
     matchLabels:
-      app: integration-svc-hpa
+      app: integration-svc-smart
   namespaceSelector:
     matchNames:
       - default

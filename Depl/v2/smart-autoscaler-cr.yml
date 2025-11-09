@@ -7,25 +7,36 @@ spec:
   targetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: integration-svc-depl
+    name: integration-svc-depl-autoscaler
   metrics:
     - name: cpu
-      promql: 'avg(rate(container_cpu_usage_seconds_total{namespace="default", pod=~"integration-svc-.*"}[1m]))'
-      weight: 0.3
-      target: 0.5   # target utilization (fraction of requested CPU)
-    - name: rps
-      promql: 'sum(rate(http_server_requests_seconds_count{job="integration-svc"}[1m]))'
+      promql: |
+        avg by (pod) (
+          rate(container_cpu_usage_seconds_total{namespace="default", pod=~"integration-svc-depl-autoscaler.*", container!="POD"}[1m])
+        )
+      target: 70.0
       weight: 0.6
-      target: 100   # target requests per second per cluster (you can change to per-pod later)
+
+    - name: rps
+      promql:  |
+        sum by (pod) (
+          rate(http_server_requests_seconds_count{
+            namespace="default",
+            application="integration-svc-smart"
+          }[1m])
+        )
+      target: 10.0
+      weight: 0.3
+
     - name: queue
-      promql: 'max(integration_queue_length{job="integration-svc"})'
-      weight: 0.1
+      promql: max(integration_queue_length{namespace="default", application="integration-svc-smart"})
       target: 5
+      weight: 0.1
   ewmaAlpha: 0.25
   pid:
     kp: 0.6
-    ki: 0.015
-    kd: 0.08
+    ki: 0.02
+    kd: 0.1
   dynamicThreshold:
     enabled: true
     adjustmentFactor: 0.1

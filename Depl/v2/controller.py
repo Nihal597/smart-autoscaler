@@ -29,7 +29,7 @@ KP, KI, KD = float(os.getenv("KP", "0.6")), float(os.getenv("KI", "0.015")), flo
 
 MIN_REPLICAS = int(os.getenv("MIN_REPLICAS", "1"))
 MAX_REPLICAS = int(os.getenv("MAX_REPLICAS", "5"))
-TARGET_DEPLOYMENT_ENV = os.getenv("TARGET_DEPLOYMENT", "integration-svc-depl")  # optional: can be defined via CR
+TARGET_DEPLOYMENT_ENV = os.getenv("TARGET_DEPLOYMENT", "integration-svc-depl-autoscaler")  # optional: can be defined via CR
 
 class EWMA:
     def __init__(self, alpha): self.alpha, self.value = alpha, None
@@ -98,11 +98,25 @@ def main():
     # Simple built-in metric set (used if you don't have a CR ready)
     METRICS = [
         # CPU: per‑pod cores (avg by pod). set target to cores per pod (start ~0.1-0.3)
-        {"name": "cpu", "promql": f'avg by (pod) (rate(container_cpu_usage_seconds_total{{namespace="{NAMESPACE}", pod=~"integration-svc-.*"}}[1m]))', "target": 0.2, "weight": 0.5},
+        {
+            "name": "cpu",
+            "promql": f'''
+                avg by (pod) (
+                    rate(container_cpu_usage_seconds_total{{namespace="{NAMESPACE}", pod=~"integration-svc-autoscaler-.*", container!="POD"}}[1m])
+                ) * 100
+            ''',
+            "target": 20.0,  # 20% CPU target per pod
+            "weight": 0.5,
+        },        
         # RPS: per‑pod requests/sec (avg). set target per‑pod (start ~0.02-0.2)
-        {"name": "rps", "promql": f'avg by (pod) (rate(http_server_requests_seconds_count{{namespace="{NAMESPACE}", job="integration-svc"}}[1m]))', "target": 0.05, "weight": 0.3},
+        {
+            "name": "rps",
+            "promql": f'sum by(pod) (rate(http_server_requests_seconds_count{{namespace="{NAMESPACE}", application="integration-svc-smart"}}[1m]))',
+            "target": 10.0,  # scale-up threshold for sustained 10+ req/sec per pod
+            "weight": 0.3,
+        },        
         # Queue (max per pod / cluster); tune target as needed
-        {"name": "queue", "promql": f'max(integration_queue_length{{namespace="{NAMESPACE}", job="integration-svc"}})', "target": 5, "weight": 0.2}
+        {"name": "queue", "promql": f'max(integration_queue_length{{namespace="{NAMESPACE}", application="integration-svc-smart"}})', "target": 5.0, "weight": 0.1}
     ]
 
     # per-metric EWMA and PID
@@ -113,24 +127,34 @@ def main():
     while True:
         weighted_sum = 0.0
         total_weight = 0.0
+
+        # --- Metric computation loop ---
         for m in METRICS:
             raw = prom_query(m["promql"])
             smooth = ewmas[m["name"]].update(raw)
             err = 0.0 if m["target"] == 0 else (smooth - m["target"]) / float(m["target"])
             pid_out = pids[m["name"]].update(err, POLL_INTERVAL)
-            # clamp per-metric PID output to reasonable bounds to avoid extreme changes
-            pid_out = max(-1.0, min(1.0, pid_out))
+            pid_out = max(-1.0, min(1.0, pid_out))  # clamp each PID to avoid runaway output
             weighted_sum += pid_out * m["weight"]
             total_weight += m["weight"]
             print(f"[metric] {m['name']} raw={raw:.3f} smooth={smooth:.3f} err={err:.3f} pid={pid_out:.4f}")
 
-        combined = weighted_sum / (total_weight or 1.0)
-        # clamp combined multiplier to avoid extreme jumps
-        combined = max(-0.5, min(1.0, combined))
+        # --- New: capture raw unbounded combined before clamp ---
+        raw_combined = weighted_sum / (total_weight or 1.0)
 
-        # --- dynamic threshold adjustment (read SmartScaler CR) ---
-        # If a SmartScaler CR exists and dynamicThreshold.enabled is true,
-        # adjust the combined multiplier by the CR's adjustmentFactor.
+        # expose raw unbounded combined to help debug
+        try:
+            combined_g.labels().set(float(raw_combined))
+        except Exception:
+            pass
+
+        # --- New: adaptive clamp logic (more responsive) ---
+        # Soft clamp: allow negative side down to -1.0, not -0.5 fixed
+        lower_limit = -1.0
+        upper_limit = 1.0
+        combined = max(lower_limit, min(upper_limit, raw_combined))
+
+        # --- dynamic threshold adjustment ---
         try:
             cr_name = os.getenv("SMARTSCALER_CR", "integration-scaler")
             cr = custom_api.get_namespaced_custom_object(
@@ -144,63 +168,52 @@ def main():
             if dt.get("enabled"):
                 af = float(dt.get("adjustmentFactor", 0.0))
                 if af != 0.0:
-                    # increase aggressiveness for scale-up, decrease for scale-down
                     combined = combined * (1.0 + af) if combined > 0 else combined * (1.0 - af)
                     print(f"[dynamic] CR={cr_name} adjustmentFactor={af:.3f} combined_adjusted={combined:.4f}")
         except Exception as e:
-            # tolerate missing CR or transient API errors; keep combined as-is
             print("[dynamic] CR read failed or not present:", e)
-        # --- end dynamic adjustment ---
 
-        # find current replicas
-        target_dep = TARGET_DEPLOYMENT_ENV or "integration-svc-depl"
+        # --- scaling computation ---
         try:
-            dep = apps.read_namespaced_deployment(target_dep, NAMESPACE)
+            dep = apps.read_namespaced_deployment(TARGET_DEPLOYMENT_ENV, NAMESPACE)
             current = int(dep.status.replicas or dep.spec.replicas or 1)
         except Exception as e:
             print("[main] read deployment failed:", e)
-            time.sleep(POLL_INTERVAL); continue
-        
+            time.sleep(POLL_INTERVAL)
+            continue
+
         raw_factor = current * (1.0 + combined)
-        if combined >= 0:
-            raw_desired = int(math.ceil(raw_factor))
-        else:
-            raw_desired = int(math.floor(raw_factor))
+        raw_desired = math.ceil(raw_factor) if combined >= 0 else math.floor(raw_factor)
         raw_desired = max(0, raw_desired)
-        # limit replica change per loop to +/-1 to make scaling gradual
-        max_delta = 1
+
+        # gradual scaling
         delta = raw_desired - current
-        if delta > max_delta:
-            desired = current + max_delta
-        elif delta < -max_delta:
-            desired = current - max_delta
+        if delta > 1:
+            desired = current + 1
+        elif delta < -1:
+            desired = current - 1
         else:
             desired = raw_desired
 
-        # final clamp to configured bounds
+        # enforce bounds
         desired = max(MIN_REPLICAS, min(MAX_REPLICAS, desired))
-        
-        # expose latest average PID and EWMA across metrics for observability
+
+        # --- Metrics exposure ---
         try:
             avg_pid = sum(pids[m["name"]].prev_err for m in METRICS) / len(METRICS)
             avg_ewma = sum(ewmas[m["name"]].value or 0.0 for m in METRICS) / len(METRICS)
             pid_g.set(float(avg_pid))
             ewma_g.set(float(avg_ewma))
-        except Exception as e:
-            print("[metrics] PID/EWMA update failed:", e)
-
-        # update controller metrics for monitoring
-        try:
-            combined_g.set(float(combined))
+            combined_g.set(float(combined))  # updated after clamp + dynamic adj
             desired_replicas_g.set(int(desired))
             current_replicas_g.set(int(current))
-        except Exception:
-            pass
+        except Exception as e:
+            print("[metrics] PID/EWMA update failed:", e)
 
         if desired != current:
             direction = "up" if desired > current else "down"
             scale_actions_counter.labels(direction=direction).inc()
-            scale_deployment(apps, target_dep, desired)
+            scale_deployment(apps, TARGET_DEPLOYMENT_ENV, desired)
         else:
             print(f"[stable] current={current} desired={desired} combined={combined:.4f}")
 
