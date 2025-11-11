@@ -1,7 +1,7 @@
 # ---------------- analyze_results.py ----------------
 import pandas as pd, matplotlib.pyplot as plt, numpy as np
 
-df = pd.read_csv("load_test_results.csv")
+df = pd.read_csv("compare_results.csv")
 df = df.dropna(subset=["latency_s"])
 df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s")
 df["latency_s"] = df["latency_s"].astype(float)
